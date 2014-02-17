@@ -1,0 +1,25 @@
+<launch>
+    <arg name="config_name" default="real" />
+    
+    <!-- upload the robot description to the parameter server -->
+    <include file="$(find uibk_robot)/launch/upload.launch">
+	<arg name="file_name" value="uibk_robot_table.xacro" />
+    </include>
+	    
+    <group ns="$(arg config_name)">
+	<!-- start an instance of our hardware_adapter -->
+	<node name="hardware_adapter" 
+	      pkg="uibk_moveit_adapter" 
+	      type="HardwareAdapter" 
+	      output="screen">
+		
+	    <!-- upload the adapter configuration to the parameter server -->
+	    <rosparam command="load" file="$(find uibk_moveit_adapter)/config/adapter_config_$(arg config_name).yaml" />
+	</node> 	
+	
+	<!-- launch controllers -->
+	<include file="$(find uibk_moveit_adapter)/launch/controllers_$(arg config_name).launch" />
+ 
+    </group>
+	      
+</launch>

@@ -1,0 +1,27 @@
+<package>
+  <description brief="uibk_moveit_adapter">
+
+     uibk_moveit_adapter
+
+  </description>
+  <author>Martin Griesser</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/uibk_moveit_adapter</url>
+  <depend package="roscpp"/>
+  <depend package="controller_manager"/>
+  <depend package="motion_control_msgs"/>
+  <depend package="moveit_msgs"/>
+  <depend package="moveit_core"/>
+  <depend package="definitions" />
+  
+  <rosdep name="eigen" />
+  
+  <export>
+    <cpp cflags="`pkg-config --cflags eigen3` -I${prefix}/include `rosboost-cfg --cflags`" 
+         lflags="-Wl,-rpath,${prefix}/lib -L${prefix}/lib -lplanning_models"/>
+  </export>
+
+</package>
+
+

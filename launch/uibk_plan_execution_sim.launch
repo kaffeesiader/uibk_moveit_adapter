@@ -1,0 +1,19 @@
+<launch>
+
+  <!-- start the fake hardware interface -->
+  <include file="$(find uibk_moveit_adapter)/launch/hardware_adapter_sim.launch">
+    <!-- <arg name="init_config" value="real" /> -->
+  </include>   
+  
+  <!-- start the moveit components -->
+  <include file="$(find uibk_moveit_config)/launch/move_group.launch">
+    <arg name="publish_monitored_planning_scene" value="true" />
+  </include>
+ 
+  <!-- start the planning and execution service node -->
+  <node name="plan_execution_node" pkg="uibk_moveit_adapter" type="plan_execution_node" output="screen" />
+  
+  # The visualization component of MoveIt!
+  <include file="$(find uibk_moveit_config)/launch/moveit_rviz.launch"/>
+ 
+</launch>

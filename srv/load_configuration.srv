@@ -1,0 +1,4 @@
+# loads the adapter configuration with given name
+string name
+---
+bool ok
