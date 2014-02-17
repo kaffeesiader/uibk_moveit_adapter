@@ -12,6 +12,10 @@ distribution. If you use ROS groovy, you have to download the source code from
   
 Read the INSTALL_ROS_CONTROL file for further details!
 
+Build the hardware adapter package:
+
+  rosmake uibk_moveit_adapter
+
 After building the 'uibk_moveit_adapter' package, you can launch the hardware adapter via
 'roslaunch uibk_moveit_adapter hardware_adapter.launch' for interfacing the real robot, or
 'roslaunch uibk_moveit_adapter hardware_adapter_simulation.launch' for interfacing the simulator.
@@ -65,6 +69,6 @@ This node uses various services provided by MoveIt so it can only work if the Mo
 previously. For launching all necessary nodes you can use the 'uibk_plan_execution.launch' file. This will
 also launch the RViz Visualization tools for visualizing the planned trajectories.
 
-As this services are very new and not tested very well i ask you to be very careful! Please execute no trajectoriy
+As this services are very new and not tested very well I ask you to be very careful! Please execute no trajectoriy
 without checking it's visualization in RViz first!
 
