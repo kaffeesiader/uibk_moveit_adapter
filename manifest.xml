@@ -11,9 +11,15 @@
   <depend package="roscpp"/>
   <depend package="controller_manager"/>
   <depend package="motion_control_msgs"/>
+  <depend package="definitions" />
+  
   <depend package="moveit_msgs"/>
   <depend package="moveit_core"/>
-  <depend package="definitions" />
+  <depend package="moveit_ros_planning"/>
+  <depend package="moveit_ros_planning_interface"/>
+  <depend package="moveit_ros_robot_interaction"/>
+  
+  <depend package="actionlib"/>
   
   <rosdep name="eigen" />
   
