@@ -21,10 +21,27 @@ install
 lib
 bin
 *_gen
+catkin
+catkin_generated
+gtest
+test_results
+msg_gen
+srv_gen
 
+# cmake
+CMakeCache.txt
+CMakeFiles
+# Makefile
+cmake_install.cmake
+install_manifest.txt
+
+
+# eclipse
 .project
 .cproject
 .pydevproject
 */.settings
 */_*
+
+# ROS warehouse
 default_warehouse_mongo_db

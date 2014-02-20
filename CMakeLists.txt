@@ -34,7 +34,7 @@ rosbuild_add_executable(HardwareAdapter
     src/UibkRobotHW.cpp
     src/UibkControllerManager.cpp)
     
-rosbuild_add_executable(plan_execution_node src/PlanExecutionNode.cpp)
+rosbuild_add_executable(move_goal src/move_goal.cpp)
     
 
 #target_link_libraries(example ${PROJECT_NAME})
