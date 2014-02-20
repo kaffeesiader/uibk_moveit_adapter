@@ -15,16 +15,16 @@
 *.py
 *.pyc
 
-*/build
-*/devel
-*/install
-*/lib
-*/bin
-*/*_gen
+build
+devel
+install
+lib
+bin
+*_gen
 
-*/.project
-*/.cproject
-*/.pydevproject
+.project
+.cproject
+.pydevproject
 */.settings
 */_*
-*/default_warehouse_mongo_db
+default_warehouse_mongo_db
