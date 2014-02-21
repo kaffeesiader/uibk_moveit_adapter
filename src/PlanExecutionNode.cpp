@@ -84,7 +84,7 @@ private:
 			ROS_WARN("No solution found");
 			return false;
 		}
-
+		ROS_INFO("Motion plan calculated.");
 		int trajSize = (int)plan.trajectory_.joint_trajectory.points.size();
 
 		ROS_INFO("Planning successful completed in %.2fs", plan.planning_time_);
@@ -192,6 +192,11 @@ private:
 
 
 public:
+  
+	PlanExecution() : _initialized(false) {
+	}
+
+	virtual ~PlanExecution() {}
 	/**
 	 * Initializes the move_group instance.
 	 * Reads various parameters from parameter server and sets
@@ -204,11 +209,10 @@ public:
 		if(_initialized) {
 			return true;
 		}
-		ROS_INFO("Launching plan_execution_node");
-
-		string group_name;
+		
+		string group_name = "right_arm";
 		if(!p_nh.getParam("planning_group_name", group_name)) {
-			ROS_WARN("Paramteter 'planning_group_name' not set. Assuming default value.");
+			ROS_WARN("Paramteter 'planning_group_name' not set. Assuming '%s' as default.", group_name.c_str());
 		}
 
 		ROS_INFO("Connecting to move_group '%s'", group_name.c_str());
@@ -227,7 +231,7 @@ public:
 		_move_group->setPlanningTime(max_plan_time);
 
 		string planner_id;
-		if(!p_nh.getParam("planner_name", planner_id)) {
+		if(!p_nh.getParam("planner_id", planner_id)) {
 			ROS_WARN("Parameter 'planner_id' not set. Using default value instead.");
 		}
 		ROS_INFO("Using planner '%s'", planner_id.c_str());
@@ -239,6 +243,7 @@ public:
 		_planning_server = nh.advertiseService(PLANNING_SERVICE_NAME, &PlanExecution::PlanningServiceCB, this);
 		_execution_server = nh.advertiseService(EXECUTION_SERVICE_NAME, &PlanExecution::ExecutionServiceCB, this);
 
+		_initialized = true;
 		ROS_INFO("Connected!");
 
 		return true;
@@ -248,13 +253,16 @@ public:
 
 int main(int argc, char **argv) {
 	ros::init(argc, argv, "plan_execution_node");
+	AsyncSpinner spinner(1);
+	spinner.start();
 
 	ROS_INFO("Launching plan_execution_node");
 	// public nodehandle
 	ros::NodeHandle nh;
 	// private nodehandle for retrieving parameters
 	ros::NodeHandle p_nh("~");
-
+	ROS_INFO("Initializing planner"); 
+	
 	PlanExecution pe;
 	if(!pe.initialize(nh, p_nh)) {
 		ROS_ERROR("Unable to start plan execution node!");
