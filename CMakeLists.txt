@@ -36,5 +36,6 @@ rosbuild_add_executable(HardwareAdapter
     
 rosbuild_add_executable(plan_execution_node src/PlanExecutionNode.cpp)
 rosbuild_add_executable(move_goal src/move_goal.cpp)
+rosbuild_add_executable(test_plan_execution_node src/test_plan_execution_node.cpp)
 
 #target_link_libraries(example ${PROJECT_NAME})
