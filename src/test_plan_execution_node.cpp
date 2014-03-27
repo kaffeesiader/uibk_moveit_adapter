@@ -62,11 +62,12 @@ bool load_test_poses(const char *fn, vector<geometry_msgs::Pose> &test_poses) {
 	return true;
 }
 
-void run_tests(vector<geometry_msgs::Pose> &poses) {
+void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 	ROS_INFO("Received %d test poses. Starting tests.", (int)poses.size());
 
 	for(size_t i = 0; i < poses.size(); ++i) {
 		TrajectoryPlanning planning_srv;
+		planning_srv.request.arm = arm;
 		planning_srv.request.ordered_grasp.resize(1);
 
 		int attempts = 1;
@@ -144,7 +145,7 @@ int main(int argc, char **argv) {
 
 	ROS_INFO("Connected!");
 
-	run_tests(test_poses);
+	run_tests(planning_group_name, test_poses);
 
 	return EXIT_SUCCESS;
 
