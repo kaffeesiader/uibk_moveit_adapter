@@ -36,10 +36,8 @@ class PlanExecution {
 private:
 
 	MoveGroupPtr _move_group;
-
 	// caches all planned trajectories for later execution
 	vector<MotionPlanPtr> _motion_plans;
-	string _planned_for;
 
 	ServiceServer _planning_server;
 	ServiceServer _execution_server;
@@ -71,22 +69,11 @@ private:
 	 * @param goal
 	 * @return
 	 */
-	bool planTrajectory(const string &arm, geometry_msgs::PoseStamped &goal, vector<Trajectory> &trajectories) {
+	bool planTrajectory( geometry_msgs::PoseStamped &goal, vector<Trajectory> &trajectories) {
 
-		string eef_link;
+		ROS_INFO("Setting pose target");
 
-		if(arm == "right_arm") {
-			eef_link = "right_arm_7_link";
-		} else if (arm == "left_arm") {
-			eef_link = "left_arm_7_link";
-		} else {
-			ROS_ERROR("Invalid arm name provided '%s'", arm.c_str());
-			return false;
-		}
-
-		ROS_INFO("Setting pose target for %s", eef_link.c_str());
-
-		if(!_move_group->setPoseTarget(goal, eef_link)) {
+		if(!_move_group->setPoseTarget(goal)) {
 			ROS_ERROR("Setting pose target failed!");
 			return false;
 		}
@@ -97,7 +84,6 @@ private:
 			ROS_WARN("No solution found");
 			return false;
 		}
-
 		ROS_INFO("Motion plan calculated.");
 		int trajSize = (int)plan.trajectory_.joint_trajectory.points.size();
 
@@ -127,15 +113,12 @@ private:
 	bool PlanningServiceCB(TrajectoryPlanning::Request &request,
 							TrajectoryPlanning::Response &response) {
 
-		ROS_INFO("Received trajectory planning request for %s", request.arm.c_str());
+		ROS_INFO("Received trajectory planning request");
 		ros::Time start_time = ros::Time::now();
 
 		// clear all previously cached motion plans
 		_motion_plans.clear();
-		// set the current move group depending on the used arm...
-
 		vector<Trajectory> &trajectories = response.trajectory;
-		string arm = request.arm;
 
 		for(size_t i = 0; i < request.ordered_grasp.size(); ++i) {
 
@@ -143,7 +126,7 @@ private:
 			// ensure that the frame id is set to the world reference frame
 			goal.header.frame_id = "world_link";
 
-			if(!planTrajectory(arm, goal, trajectories)) {
+			if(!planTrajectory(goal, trajectories)) {
 				ROS_WARN("No trajectory found for grasp %d", (int)i);
 			}
 		}
@@ -202,7 +185,6 @@ private:
 
 		// clear all previously cached motion plans because they are not valid any more...
 		_motion_plans.clear();
-
 		// everything went fine...
 		response.result = TrajectoryExecution::Response::SUCCESS;
 		return true;
@@ -227,13 +209,11 @@ public:
 		if(_initialized) {
 			return true;
 		}
-		
-//		string group_name = "right_arm";
-//		if(!p_nh.getParam("planning_group_name", group_name)) {
-//			ROS_WARN("Paramteter 'planning_group_name' not set. Assuming '%s' as default.", group_name.c_str());
-//		}
 
-		string group_name = "both_arms";
+		string group_name = "right_arm";
+		if(!p_nh.getParam("planning_group_name", group_name)) {
+			ROS_WARN("Paramteter 'planning_group_name' not set. Assuming '%s' as default.", group_name.c_str());
+		}
 
 		ROS_INFO("Connecting to move_group '%s'", group_name.c_str());
 		_move_group.reset(new move_group_interface::MoveGroup(group_name));
@@ -282,7 +262,7 @@ int main(int argc, char **argv) {
 	// private nodehandle for retrieving parameters
 	ros::NodeHandle p_nh("~");
 	ROS_INFO("Initializing planner"); 
-	
+
 	PlanExecution pe;
 	if(!pe.initialize(nh, p_nh)) {
 		ROS_ERROR("Unable to start plan execution node!");
