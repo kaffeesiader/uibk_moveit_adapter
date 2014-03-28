@@ -13,12 +13,18 @@
 #include <moveit/move_group_interface/move_group.h>
 
 #include <boost/shared_ptr.hpp>
+#include <boost/thread/mutex.hpp>
 
 typedef boost::shared_ptr<move_group_interface::MoveGroup> MoveGroupPtr;
 typedef boost::shared_ptr<move_group_interface::MoveGroup::Plan> MotionPlanPtr;
 
 #define DEF_PLAN_ATTEMPTS 2
 #define DEF_MAX_PLAN_TIME 10
+
+#define GOAL_JOINT_TOLERANCE 1e-4
+#define GOAL_POS_TOLERANCE 1e-3 //1 mm
+#define GOAL_ORIENT_TOLERANCE 1e-3 //~1 deg
+
 
 #define PLANNING_SERVICE_NAME "/trajectory_planner_srv"
 #define EXECUTION_SERVICE_NAME "/trajectory_execution_srv"
@@ -35,16 +41,22 @@ class PlanExecution {
 
 private:
 
+	// holds the current planning instance - right_arm or left_arm
 	MoveGroupPtr _move_group;
+
+	MoveGroupPtr _right_arm;
+	MoveGroupPtr _left_arm;
 
 	// caches all planned trajectories for later execution
 	vector<MotionPlanPtr> _motion_plans;
-	string _planned_for;
 
 	ServiceServer _planning_server;
 	ServiceServer _execution_server;
 
 	bool _initialized;
+	bool _executing;
+
+	boost::mutex _mutex;
 
 	/**
 	 * Convenience method to fill in the trajectory data from the given MotionPlanResponse into
@@ -71,33 +83,22 @@ private:
 	 * @param goal
 	 * @return
 	 */
-	bool planTrajectory(const string &arm, geometry_msgs::PoseStamped &goal, vector<Trajectory> &trajectories) {
+	bool planTrajectory( geometry_msgs::PoseStamped &goal, vector<Trajectory> &trajectories) {
 
-		string eef_link;
+		ROS_INFO("Setting pose target");
 
-		if(arm == "right_arm") {
-			eef_link = "right_arm_7_link";
-		} else if (arm == "left_arm") {
-			eef_link = "left_arm_7_link";
-		} else {
-			ROS_ERROR("Invalid arm name provided '%s'", arm.c_str());
-			return false;
-		}
-
-		ROS_INFO("Setting pose target for %s", eef_link.c_str());
-
-		if(!_move_group->setPoseTarget(goal, eef_link)) {
+		if(!_move_group->setPoseTarget(goal)) {
 			ROS_ERROR("Setting pose target failed!");
 			return false;
 		}
 
 		ROS_INFO("Calling planning service");
 		move_group_interface::MoveGroup::Plan plan;
+
 		if(!_move_group->plan(plan)) {
 			ROS_WARN("No solution found");
 			return false;
 		}
-
 		ROS_INFO("Motion plan calculated.");
 		int trajSize = (int)plan.trajectory_.joint_trajectory.points.size();
 
@@ -125,17 +126,36 @@ private:
 	 * @return
 	 */
 	bool PlanningServiceCB(TrajectoryPlanning::Request &request,
-							TrajectoryPlanning::Response &response) {
+						   TrajectoryPlanning::Response &response) {
 
-		ROS_INFO("Received trajectory planning request for %s", request.arm.c_str());
+		// prevent from planning during execution...
+		if(_executing) {
+			ROS_ERROR("Unable to plan while moving the robot!");
+			return false;
+		}
+
+		string arm = request.arm;
+
+		ROS_INFO("Received trajectory planning request for '%s'", arm.c_str());
+
+		// set the current move_group instance to value based on request.arm parameter
+		if(arm == "right_arm") {
+			_move_group = _right_arm;
+		} else if(arm == "left_arm") {
+			_move_group = _left_arm;
+		} else {
+			ROS_ERROR("Unknown planning group '%s'!", arm.c_str());
+			return false;
+		}
+
 		ros::Time start_time = ros::Time::now();
 
 		// clear all previously cached motion plans
 		_motion_plans.clear();
-		// set the current move group depending on the used arm...
-
 		vector<Trajectory> &trajectories = response.trajectory;
-		string arm = request.arm;
+
+		// lock the mutex during path planning...
+		_mutex.lock();
 
 		for(size_t i = 0; i < request.ordered_grasp.size(); ++i) {
 
@@ -143,10 +163,12 @@ private:
 			// ensure that the frame id is set to the world reference frame
 			goal.header.frame_id = "world_link";
 
-			if(!planTrajectory(arm, goal, trajectories)) {
+			if(!planTrajectory(goal, trajectories)) {
 				ROS_WARN("No trajectory found for grasp %d", (int)i);
 			}
 		}
+
+		_mutex.unlock();
 
 		if(trajectories.size() > 0) {
 			response.result = TrajectoryPlanning::Response::SUCCESS;
@@ -161,6 +183,7 @@ private:
 
 		return true;
 	}
+
 	/**
 	 * Callback method for the trajectory execution service server.
 	 *
@@ -192,7 +215,16 @@ private:
 
 		ROS_INFO("Executing trajectory...");
 
-		if(!_move_group->execute(plan)) {
+		// lock the mutex during execution...
+		_mutex.lock();
+
+		_executing = true;
+		bool success = _move_group->execute(plan);
+		_executing = false;
+
+		_mutex.unlock();
+
+		if(success) {
 			ROS_ERROR("Trajectory execution failed!");
 			response.result = TrajectoryExecution::Response::OTHER_ERROR;
 			return false;
@@ -202,7 +234,6 @@ private:
 
 		// clear all previously cached motion plans because they are not valid any more...
 		_motion_plans.clear();
-
 		// everything went fine...
 		response.result = TrajectoryExecution::Response::SUCCESS;
 		return true;
@@ -211,7 +242,7 @@ private:
 
 public:
   
-	PlanExecution() : _initialized(false) {
+	PlanExecution(): _move_group(_right_arm), _initialized(false), _executing(false) {
 	}
 
 	virtual ~PlanExecution() {}
@@ -227,35 +258,45 @@ public:
 		if(_initialized) {
 			return true;
 		}
-		
+
 //		string group_name = "right_arm";
 //		if(!p_nh.getParam("planning_group_name", group_name)) {
 //			ROS_WARN("Paramteter 'planning_group_name' not set. Assuming '%s' as default.", group_name.c_str());
 //		}
 
-		string group_name = "both_arms";
-
-		ROS_INFO("Connecting to move_group '%s'", group_name.c_str());
-		_move_group.reset(new move_group_interface::MoveGroup(group_name));
+		ROS_INFO("Connecting to move_groups for left and right arm");
+		_right_arm.reset(new move_group_interface::MoveGroup("right_arm"));
+		_left_arm.reset(new move_group_interface::MoveGroup("left_arm"));
 
 		int attempts = DEF_PLAN_ATTEMPTS;
 		if(!p_nh.getParam("num_planning_attempts", attempts)) {
 			ROS_WARN("Parameter 'num_planning_attempts' not set. Using default value instead.");
 		}
-		_move_group->setNumPlanningAttempts(attempts);
+		_right_arm->setNumPlanningAttempts(attempts);
+		_left_arm->setNumPlanningAttempts(attempts);
 
 		double max_plan_time = DEF_MAX_PLAN_TIME;
 		if(!p_nh.getParam("max_planning_time", max_plan_time)) {
 			ROS_WARN("Parameter 'max_planning_time' not set. Using default value instead.");
 		}
-		_move_group->setPlanningTime(max_plan_time);
+		_right_arm->setPlanningTime(max_plan_time);
+		_left_arm->setPlanningTime(max_plan_time);
 
 		string planner_id;
 		if(!p_nh.getParam("planner_id", planner_id)) {
 			ROS_WARN("Parameter 'planner_id' not set. Using default value instead.");
 		}
 		ROS_INFO("Using planner '%s'", planner_id.c_str());
-		_move_group->setPlannerId(planner_id);
+		_right_arm->setPlannerId(planner_id);
+		_left_arm->setPlannerId(planner_id);
+
+		_right_arm->setGoalJointTolerance(GOAL_JOINT_TOLERANCE);
+		_right_arm->setGoalPositionTolerance(GOAL_POS_TOLERANCE);
+		_right_arm->setGoalOrientationTolerance(GOAL_ORIENT_TOLERANCE);
+
+		_left_arm->setGoalJointTolerance(GOAL_JOINT_TOLERANCE);
+		_left_arm->setGoalPositionTolerance(GOAL_POS_TOLERANCE);
+		_left_arm->setGoalOrientationTolerance(GOAL_ORIENT_TOLERANCE);
 
 		ROS_INFO("Starting services...");
 
@@ -282,7 +323,7 @@ int main(int argc, char **argv) {
 	// private nodehandle for retrieving parameters
 	ros::NodeHandle p_nh("~");
 	ROS_INFO("Initializing planner"); 
-	
+
 	PlanExecution pe;
 	if(!pe.initialize(nh, p_nh)) {
 		ROS_ERROR("Unable to start plan execution node!");

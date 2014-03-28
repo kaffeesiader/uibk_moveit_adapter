@@ -65,6 +65,8 @@ bool load_test_poses(const char *fn, vector<geometry_msgs::Pose> &test_poses) {
 void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 	ROS_INFO("Received %d test poses. Starting tests.", (int)poses.size());
 
+	int successful = 0;
+
 	for(size_t i = 0; i < poses.size(); ++i) {
 		TrajectoryPlanning planning_srv;
 		planning_srv.request.arm = arm;
@@ -95,10 +97,11 @@ void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 				execution_client.call(execution_srv);
 				if(execution_srv.response.result == TrajectoryExecution::Response::SUCCESS) {
 					ROS_INFO("Pose target %d reached.\n", (int)i + 1);
+					successful++;
 					sleep(3);
 					break;
 				} else {
-					ROS_ERROR("Trajectory execution failed!");
+					ROS_ERROR("Trajectory execution failed!\n");
 				}
 
 
@@ -109,6 +112,8 @@ void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 			attempts++;
 		}
 	}
+
+	ROS_INFO("Test run completed! %d positions reached, %d failed!", successful, (int)poses.size() - successful);
 }
 
 int main(int argc, char **argv) {
