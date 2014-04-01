@@ -133,7 +133,8 @@ private:
 			ROS_ERROR("Unable to plan while moving the robot!");
 			return false;
 		}
-
+		
+		_motion_plans.clear();
 		string arm = request.arm;
 
 		ROS_INFO("Received trajectory planning request for '%s'", arm.c_str());
@@ -272,6 +273,11 @@ public:
 		if(!p_nh.getParam("num_planning_attempts", attempts)) {
 			ROS_WARN("Parameter 'num_planning_attempts' not set. Using default value instead.");
 		}
+		/*
+		 * Comment the following lines, if you face problems during compiling.
+		 * In that case i would strongly recommend that you update your version of MoveIt,
+		 * because this parameter is important!
+		 */
 		_right_arm->setNumPlanningAttempts(attempts);
 		_left_arm->setNumPlanningAttempts(attempts);
 
