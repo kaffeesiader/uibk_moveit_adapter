@@ -66,6 +66,7 @@ void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 	ROS_INFO("Received %d test poses. Starting tests.", (int)poses.size());
 
 	int successful = 0;
+	vector<int> succ;
 
 	for(size_t i = 0; i < poses.size(); ++i) {
 		TrajectoryPlanning planning_srv;
@@ -73,13 +74,16 @@ void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 		planning_srv.request.ordered_grasp.resize(1);
 
 		int attempts = 1;
+		int pose_target_id = (int)i + 1;
 
 		SDHand hand;
 		hand.wrist_pose.pose = poses[i];
 
 		planning_srv.request.ordered_grasp[0].grasp_trajectory.push_back(hand);
-		ROS_INFO("Planning for test pose %d", (int)i + 1);
-
+		ROS_INFO("Planning for test pose %d", pose_target_id);
+		geometry_msgs::Pose &p = poses[i];
+		ROS_INFO("Position (%.2f,%.2f,%.2f)", p.position.x, p.position.y, p.position.z);
+		ROS_INFO("Orientation(%.2f,%.2f,%.2f,%.2f)", p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w);
 
 
 		while(attempts <= PLAN_ATTEMPTS) {
@@ -96,17 +100,18 @@ void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 
 				execution_client.call(execution_srv);
 				if(execution_srv.response.result == TrajectoryExecution::Response::SUCCESS) {
-					ROS_INFO("Pose target %d reached.\n", (int)i + 1);
+					ROS_INFO("Pose target %d reached.\n", pose_target_id);
+					succ.push_back(pose_target_id);
 					successful++;
 					sleep(3);
 					break;
 				} else {
-					ROS_ERROR("Trajectory execution failed!\n");
+					ROS_ERROR("Trajectory execution for pose target %d failed!\n", pose_target_id);
 				}
 
 
 			} else {
-				ROS_ERROR("Planning failed!");
+				ROS_ERROR("Planning for pose target %d failed!\n", pose_target_id);
 			}
 
 			attempts++;
@@ -114,6 +119,10 @@ void run_tests(const string &arm, vector<geometry_msgs::Pose> &poses) {
 	}
 
 	ROS_INFO("Test run completed! %d positions reached, %d failed!", successful, (int)poses.size() - successful);
+	for (size_t i = 0; i < succ.size(); ++i) {
+		cout << succ[i] << " ";
+	}
+	cout << endl;
 }
 
 int main(int argc, char **argv) {

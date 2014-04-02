@@ -7,24 +7,30 @@
 
 #include <ros/ros.h>
 
+#include <moveit_msgs/MoveGroupAction.h>
+#include <moveit_msgs/ExecuteKnownTrajectory.h>
+
 #include <definitions/TrajectoryExecution.h>
 #include <definitions/TrajectoryPlanning.h>
 
-#include <moveit/move_group_interface/move_group.h>
-
 #include <boost/shared_ptr.hpp>
-#include <boost/thread/mutex.hpp>
+#include <actionlib/client/simple_action_client.h>
 
-typedef boost::shared_ptr<move_group_interface::MoveGroup> MoveGroupPtr;
-typedef boost::shared_ptr<move_group_interface::MoveGroup::Plan> MotionPlanPtr;
+#include <moveit/kinematic_constraints/utils.h>
+#include <moveit/robot_model_loader/robot_model_loader.h>
 
-#define DEF_PLAN_ATTEMPTS 2
-#define DEF_MAX_PLAN_TIME 10
+
+#define DEF_PLAN_ATTEMPTS 10
+#define DEF_MAX_PLAN_TIME 5.0
 
 #define GOAL_JOINT_TOLERANCE 1e-4
-#define GOAL_POS_TOLERANCE 1e-3 //1 mm
-#define GOAL_ORIENT_TOLERANCE 1e-3 //~1 deg
+#define GOAL_POS_TOLERANCE 1e-2 //1 mm
+#define GOAL_ORIENT_TOLERANCE 1e-2 //~1 deg
 
+#define CAN_LOOK false
+#define ALLOW_REPLAN false
+#define SUPPORT_SURFACE "table_surface_link"
+#define FRAME_ID "world_link"
 
 #define PLANNING_SERVICE_NAME "/trajectory_planner_srv"
 #define EXECUTION_SERVICE_NAME "/trajectory_execution_srv"
@@ -34,6 +40,19 @@ using namespace moveit_msgs;
 using namespace ros;
 using namespace std;
 
+struct MotionPlan {
+	/// The full starting state used for planning
+	moveit_msgs::RobotState start_state_;
+
+	/// The trajectory of the robot (may not contain joints that are the same as for the start_state_)
+	moveit_msgs::RobotTrajectory trajectory_;
+
+	/// The amount of time it took to generate the plan
+	double planning_time_;
+};
+
+typedef boost::shared_ptr<MotionPlan> MotionPlanPtr;
+
 /**
  * Rosnode that provides the services for planning and execution of robot motions
  */
@@ -41,11 +60,9 @@ class PlanExecution {
 
 private:
 
-	// holds the current planning instance - right_arm or left_arm
-	MoveGroupPtr _move_group;
-
-	MoveGroupPtr _right_arm;
-	MoveGroupPtr _left_arm;
+	boost::scoped_ptr<actionlib::SimpleActionClient<moveit_msgs::MoveGroupAction> > move_action_client_;
+	ros::ServiceClient execution_client_;
+	robot_model::RobotModelConstPtr robot_model_;
 
 	// caches all planned trajectories for later execution
 	vector<MotionPlanPtr> _motion_plans;
@@ -56,6 +73,14 @@ private:
 	bool _initialized;
 	bool _executing;
 
+	double planning_time_;
+	int planning_attempts_;
+	double goal_joint_tolerance_;
+	double goal_position_tolerance_;
+	double goal_orientation_tolerance_;
+	string planner_id_;
+	string support_surface_;
+
 	boost::mutex _mutex;
 
 	/**
@@ -65,7 +90,7 @@ private:
 	 * @param plan
 	 * @param trajectory
 	 */
-	void MotionPlanToTrajectory(const move_group_interface::MoveGroup::Plan &plan, Trajectory &trajectory) {
+	void MotionPlanToTrajectory(const MotionPlan &plan, Trajectory &trajectory) {
 		const vector<trajectory_msgs::JointTrajectoryPoint> &points = plan.trajectory_.joint_trajectory.points;
 
 		// pick each point from the trajectory and create a UIBKRobot object
@@ -83,39 +108,90 @@ private:
 	 * @param goal
 	 * @return
 	 */
-	bool planTrajectory( geometry_msgs::PoseStamped &goal, vector<Trajectory> &trajectories) {
+	bool planTrajectory(const string &group_name, geometry_msgs::PoseStamped &pose_goal, vector<Trajectory> &trajectories) {
 
 		ROS_INFO("Setting pose target");
 
-		if(!_move_group->setPoseTarget(goal)) {
-			ROS_ERROR("Setting pose target failed!");
+		if (!move_action_client_) {
+			ROS_ERROR_STREAM("MoveGroup action client not found");
 			return false;
 		}
+		if (!move_action_client_->isServerConnected()) {
+			ROS_ERROR_STREAM("MoveGroup action server not connected");
+			return false;
+		}
+		string end_effector_link = "";
+		if(group_name == "right_arm") {
+			end_effector_link = "right_arm_7_link";
+		} else if(group_name == "left_arm") {
+			end_effector_link = "left_arm_7_link";
+		} else {
+			ROS_WARN("Unknown group name '%s'", group_name.c_str());
+		}
+
+		ROS_INFO("Maximum planning time: %.1f, attempts: %d", planning_time_, planning_attempts_);
+		moveit_msgs::MoveGroupGoal goal;
+		goal.request.group_name = group_name;
+		goal.request.num_planning_attempts = planning_attempts_;
+		goal.request.allowed_planning_time = planning_time_;
+		goal.request.planner_id = planner_id_;
+	//	goal.request.workspace_parameters = workspace_parameters_;
+
+		vector<Constraints> constraints;
+		Constraints c =	kinematic_constraints::constructGoalConstraints(end_effector_link,	pose_goal,
+																		goal_position_tolerance_,
+																		goal_orientation_tolerance_);
+
+		goal.planning_options.plan_only = true;
+		goal.planning_options.look_around = false;
+		goal.planning_options.replan = false;
+		goal.planning_options.planning_scene_diff.is_diff = true;
+		goal.planning_options.planning_scene_diff.robot_state.is_diff = true;
+		goal.request.goal_constraints.push_back(c);
 
 		ROS_INFO("Calling planning service");
-		move_group_interface::MoveGroup::Plan plan;
 
-		if(!_move_group->plan(plan)) {
-			ROS_WARN("No solution found");
+		move_action_client_->sendGoal(goal);
+
+		ROS_DEBUG("Sent planning request for pose goal");
+
+		if (!move_action_client_->waitForResult()) {
+			ROS_INFO_STREAM("MoveGroup action returned early");
+		}
+
+		moveit_msgs::MoveGroupResultConstPtr res = move_action_client_->getResult();
+
+		if (move_action_client_->getState() == actionlib::SimpleClientGoalState::SUCCEEDED) {
+			ROS_INFO("Call to move_group action server succeeded!");
+			ROS_INFO("Result: %d", res->error_code.val);
+
+			MotionPlan plan;
+			plan.planning_time_ = res->planning_time;
+			plan.start_state_ = res->trajectory_start;
+			plan.trajectory_ = res->planned_trajectory;
+
+			int trajSize = (int)plan.trajectory_.joint_trajectory.points.size();
+
+			ROS_INFO("Planning successful completed in %.2fs", plan.planning_time_);
+			ROS_INFO("Trajectory contains %d points.", trajSize);
+			// store the motion plan for later usage (take index as id)
+			int index = _motion_plans.size();
+			MotionPlanPtr motion_plan_ptr(new MotionPlan(plan));
+			_motion_plans.push_back(motion_plan_ptr);
+
+			Trajectory trajectory;
+			trajectory.trajectory_id = index;
+			// populate trajectory with motion plan data
+			MotionPlanToTrajectory(plan, trajectory);
+
+			trajectories.push_back(trajectory);
+			return true;
+
+		} else {
+			ROS_WARN_STREAM("Fail: " << move_action_client_->getState().toString() << ": " << move_action_client_->getState().getText());
+			ROS_WARN_STREAM("Planning failed with status code '" << res->error_code.val << "'");
 			return false;
 		}
-		ROS_INFO("Motion plan calculated.");
-		int trajSize = (int)plan.trajectory_.joint_trajectory.points.size();
-
-		ROS_INFO("Planning successful completed in %.2fs", plan.planning_time_);
-		ROS_INFO("Trajectory contains %d points.", trajSize);
-		// store the motion plan for later usage (take index as id)
-		int index = _motion_plans.size();
-		MotionPlanPtr motion_plan_ptr(new move_group_interface::MoveGroup::Plan(plan));
-		_motion_plans.push_back(motion_plan_ptr);
-
-		Trajectory trajectory;
-		trajectory.trajectory_id = index;
-		// populate trajectory with motion plan data
-		MotionPlanToTrajectory(plan, trajectory);
-
-		trajectories.push_back(trajectory);
-		return true;
 
 	}
 	/**
@@ -133,21 +209,11 @@ private:
 			ROS_ERROR("Unable to plan while moving the robot!");
 			return false;
 		}
-		
+		// clear all previously calculated motion plans!
 		_motion_plans.clear();
 		string arm = request.arm;
 
 		ROS_INFO("Received trajectory planning request for '%s'", arm.c_str());
-
-		// set the current move_group instance to value based on request.arm parameter
-		if(arm == "right_arm") {
-			_move_group = _right_arm;
-		} else if(arm == "left_arm") {
-			_move_group = _left_arm;
-		} else {
-			ROS_ERROR("Unknown planning group '%s'!", arm.c_str());
-			return false;
-		}
 
 		ros::Time start_time = ros::Time::now();
 
@@ -164,7 +230,7 @@ private:
 			// ensure that the frame id is set to the world reference frame
 			goal.header.frame_id = "world_link";
 
-			if(!planTrajectory(goal, trajectories)) {
+			if(!planTrajectory(arm, goal, trajectories)) {
 				ROS_WARN("No trajectory found for grasp %d", (int)i);
 			}
 		}
@@ -212,17 +278,23 @@ private:
 			return false;
 		}
 
-		move_group_interface::MoveGroup::Plan &plan = *_motion_plans[id];
+		MotionPlan &plan = *_motion_plans[id];
 
 		ROS_INFO("Executing trajectory...");
 
+		ExecuteKnownTrajectory msg;
+		ExecuteKnownTrajectoryRequest &erq = msg.request;
+
+		erq.wait_for_execution = true;
+		erq.trajectory = plan.trajectory_;
+
 		// lock the mutex during execution...
 		_mutex.lock();
-
 		_executing = true;
-		bool success = _move_group->execute(plan);
-		_executing = false;
 
+		bool success = execution_client_.call(msg);
+
+		_executing = false;
 		_mutex.unlock();
 
 		if(success) {
@@ -243,7 +315,15 @@ private:
 
 public:
   
-	PlanExecution(): _move_group(_right_arm), _initialized(false), _executing(false) {
+	PlanExecution(): _initialized(false), _executing(false) {
+
+		planning_time_ = 5.0;
+		planning_attempts_ = 5;
+		goal_joint_tolerance_ = 1e-4;
+		goal_position_tolerance_ = 1e-4; // 0.1 mm
+		goal_orientation_tolerance_ = 1e-3; // ~0.1 deg
+		planner_id_ = "";
+
 	}
 
 	virtual ~PlanExecution() {}
@@ -259,50 +339,33 @@ public:
 		if(_initialized) {
 			return true;
 		}
-
-//		string group_name = "right_arm";
-//		if(!p_nh.getParam("planning_group_name", group_name)) {
-//			ROS_WARN("Paramteter 'planning_group_name' not set. Assuming '%s' as default.", group_name.c_str());
-//		}
-
-		ROS_INFO("Connecting to move_groups for left and right arm");
-		_right_arm.reset(new move_group_interface::MoveGroup("right_arm"));
-		_left_arm.reset(new move_group_interface::MoveGroup("left_arm"));
-
-		int attempts = DEF_PLAN_ATTEMPTS;
-		if(!p_nh.getParam("num_planning_attempts", attempts)) {
-			ROS_WARN("Parameter 'num_planning_attempts' not set. Using default value instead.");
+		/* Load the robot model */
+		robot_model_loader::RobotModelLoader robot_model_loader("robot_description");
+		/* Get a shared pointer to the model */
+		// instance of our robot model loaded from URDF
+		ROS_INFO("Loading robot model from URDF");
+		robot_model_ = robot_model_loader.getModel();
+		if(!robot_model_) {
+			ROS_FATAL_STREAM("Unable to construct robot model!");
+			throw runtime_error("Unable to construct robot model!");
 		}
-		/*
-		 * Comment the following lines, if you face problems during compiling.
-		 * In that case i would strongly recommend that you update your version of MoveIt,
-		 * because this parameter is important!
-		 */
-		_right_arm->setNumPlanningAttempts(attempts);
-		_left_arm->setNumPlanningAttempts(attempts);
 
-		double max_plan_time = DEF_MAX_PLAN_TIME;
-		if(!p_nh.getParam("max_planning_time", max_plan_time)) {
-			ROS_WARN("Parameter 'max_planning_time' not set. Using default value instead.");
-		}
-		_right_arm->setPlanningTime(max_plan_time);
-		_left_arm->setPlanningTime(max_plan_time);
+		ROS_INFO("Connecting to move_group client...");
+		string move_group_topic = "move_group";
+		move_action_client_.reset(new actionlib::SimpleActionClient<moveit_msgs::MoveGroupAction>(move_group_topic, true));
+		move_action_client_->waitForServer();
 
-		string planner_id;
-		if(!p_nh.getParam("planner_id", planner_id)) {
-			ROS_WARN("Parameter 'planner_id' not set. Using default value instead.");
-		}
-		ROS_INFO("Using planner '%s'", planner_id.c_str());
-		_right_arm->setPlannerId(planner_id);
-		_left_arm->setPlannerId(planner_id);
+		execution_client_ = nh.serviceClient<ExecuteKnownTrajectory>("execute_kinematic_path");
 
-		_right_arm->setGoalJointTolerance(GOAL_JOINT_TOLERANCE);
-		_right_arm->setGoalPositionTolerance(GOAL_POS_TOLERANCE);
-		_right_arm->setGoalOrientationTolerance(GOAL_ORIENT_TOLERANCE);
+		string id = "";
+		p_nh.param("num_planning_attempts", planning_attempts_, DEF_PLAN_ATTEMPTS);
+		p_nh.param("max_planning_time", planning_time_, DEF_MAX_PLAN_TIME);
+		p_nh.param("planner_id", planner_id_, id);
 
-		_left_arm->setGoalJointTolerance(GOAL_JOINT_TOLERANCE);
-		_left_arm->setGoalPositionTolerance(GOAL_POS_TOLERANCE);
-		_left_arm->setGoalOrientationTolerance(GOAL_ORIENT_TOLERANCE);
+
+		goal_joint_tolerance_ = GOAL_JOINT_TOLERANCE;
+		goal_position_tolerance_ = GOAL_POS_TOLERANCE;
+		goal_orientation_tolerance_ = GOAL_ORIENT_TOLERANCE;
 
 		ROS_INFO("Starting services...");
 
