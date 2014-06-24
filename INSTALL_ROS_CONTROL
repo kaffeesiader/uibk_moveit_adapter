@@ -1,0 +1,49 @@
+ros_control Installation intructions
+====================================
+
+Some packages depend on the newly created 'ros_control' stack, that is not included in the ROS-groovy
+distribution. So it is necessary to download the required packages from github and build them
+before building any other packages (if you are using ROS-hydro you can skip this steps):
+
+1. Create a new CATKIN workspace or use your existing CATKIN workspace:
+  
+  mkdir ~/catkin_ws/src
+  cd ~/catkin_ws/src
+  catkin_init_workspace
+  
+2. Download the 'ros_control' source packages from github:
+
+  git clone https://github.com/ros-controls/ros_control.git
+  git clone https://github.com/ros-controls/ros_controllers.git -b groovy-backported-hydro
+  git clone https://github.com/ros-controls/control_toolbox.git
+  git clone https://github.com/ros-controls/realtime_tools.git
+  
+3. Check for any missing dependencies using rosdep:
+
+  rosdep update
+  rosdep check --from-paths . --ignore-src --rosdistro groovy
+  
+  // you can automatically install the missing dependencies using rosdep via debian install:
+  
+  rosdep install --from-paths . --ignore-src --rosdistro groovy -y
+  
+4. Build the packages:
+
+  cd ~/catin_ws
+  catkin_make
+  
+  // the packages should now build without any problems
+  
+5. Source the catkin_ws setup.bash (better: include the following line into your .bashrc file)
+   to ensure that the packages are visible to the build system!
+
+  source ~/catkin_ws/devel/setup.bash
+  
+6. Check, if the packages are located correctly.
+
+  rospack find controller_manager
+  
+  // this should definitely point to the files in the catkin workspace and not those in the 
+  // .../ros/groovy/stack !
+  // otherwise something went wrong!
+  

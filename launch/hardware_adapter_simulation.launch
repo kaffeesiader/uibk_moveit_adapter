@@ -1,0 +1,5 @@
+<launch>
+    <include file="$(find uibk_moveit_adapter)/launch/hardware_adapter.launch">
+      <arg name="config_name" value="simulation" />
+    </include>
+</launch>
