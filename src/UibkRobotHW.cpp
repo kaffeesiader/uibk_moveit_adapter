@@ -148,6 +148,22 @@ JointStateAdapter::JointStateAdapter(ros::NodeHandle &nh, JointStateInterface *s
 			string msg = "Unable to launch JointStateAdapter - adapter is not readonly and no command topic name defined!";
 			throw msg;
 		}
+
+        // read the jointnames
+        if (!nh.hasParam("joints")) {
+            string msg = "Unable to launch JointStateAdapter: joints parameter not specified.";
+            throw msg;
+        }
+        XmlRpcValue joint_list;
+        nh.getParam("joints", joint_list);
+        if (joint_list.getType() != XmlRpcValue::TypeArray) {
+            string msg = "Unable to launch JointStateAdapter: joints parameter should be specified as an array";
+            throw msg;
+        }
+        for (size_t i = 0; i < joint_list.size(); ++i) {
+            joint_names_.push_back(joint_list[i]);
+        }
+
 		// create a publisher for the JointPosition messages if not readonly...
         pub_ = public_nh.advertise<std_msgs::Float64MultiArray>(cmd_topic, 1);
 		string topic_name = pub_.getTopic();
@@ -232,8 +248,7 @@ void JointStateAdapter::initialize(const sensor_msgs::JointState &initialState) 
 		command_interface_->registerHandle(pos_handle);
 
 		joints_[name] = jnt;
-        joint_names_.push_back(name);
-
+//        joint_names_.push_back(name);
 	}
 
 	initialized_ = true;
@@ -251,7 +266,12 @@ void JointStateAdapter::Update() {
     for (size_t i = 0; i < joint_names_.size(); ++i) {
         string jnt_name = joint_names_[i];
 		JointPtr jnt = joints_[jnt_name];
-        pos_msg_.data.push_back(jnt->targetPosition);
+        if(!jnt) {
+            ROS_WARN_STREAM("No joint with name " << jnt_name << " exists!");
+        } else {
+            pos_msg_.data.push_back(jnt->targetPosition);
+        }
+//        pos_msg_.data.push_back(jnt->targetPosition);
 	}
 
 	pub_.publish(pos_msg_);

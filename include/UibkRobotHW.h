@@ -54,7 +54,7 @@ private:
 
 	bool initialized_;
 	bool readonly_;
-	string jnt_name_prefix;
+    string jnt_name_prefix;
 	/**
 	 * Callback for the JointState topic subscription
 	 * @param msg
